@@ -1,28 +1,35 @@
-﻿using System;
+﻿using Microsoft.WindowsAPICodePack.Dialogs;
+using NAudio.Wave;
+using System;
+using System.Collections.Generic;
 using System.Drawing;
-using System.Windows.Forms;
-using Microsoft.WindowsAPICodePack.Dialogs;
-using PPv3_Application;
 using System.IO;
-
+using System.Windows.Forms;
 
 namespace PPv3_Application
 {
     public partial class Form1 : Form
-    {
+    { 
+        private WaveOutEvent outputDevice;
+        private AudioFileReader audioFile;
 
-        Color normalHoverBG = Color.FromArgb(40, 40, 40);
-        Color activeHoverBG = Color.FromArgb(10, 10, 10);
-        PPv3_Application.Properties.Settings settings = new Properties.Settings();
-        ListBox OsuSongFolder;
-
+        private Color normalHoverBG = Color.FromArgb(40, 40, 40);
+        private Color activeHoverBG = Color.FromArgb(10, 10, 10);
+        private string current_folder, current_map;
+        private PPv3_Application.Properties.Settings settings = new Properties.Settings();
+        private List<string> OsuSongFolder;
+        private OsuBeatmapReader.OsuBeatmapReader obr = new OsuBeatmapReader.OsuBeatmapReader();
+        PPv3_System.PPv3PatternAnalyzer PatternAnalyzer = new PPv3_System.PPv3PatternAnalyzer();
+        PPv3_System.PPv3System PPv3 = new PPv3_System.PPv3System();
         public Form1()
         {
             InitializeComponent();
             this.SetStyle(ControlStyles.ResizeRedraw, true);
-
+            OsuSongFolder = new List<string>();
         }
+
         #region Resize
+
         private ReSize resize = new ReSize();     // ReSize Class "/\" To Help Resize Form <None Style>
 
         private const int cGrip = 16;      // Grip size
@@ -70,9 +77,10 @@ namespace PPv3_Application
 
             base.WndProc(ref m);
         }
-        #endregion
-        #region UI
 
+        #endregion Resize
+
+        #region UI
 
         private void label1_MouseEnter(object sender, EventArgs e)
         {
@@ -83,6 +91,7 @@ namespace PPv3_Application
         {
             label1.BackColor = normalHoverBG;
         }
+
         private void label2_MouseEnter(object sender, EventArgs e)
         {
             label2.BackColor = activeHoverBG;
@@ -92,17 +101,30 @@ namespace PPv3_Application
         {
             label2.BackColor = normalHoverBG;
         }
-        #endregion
-
-
-
-
-        private void Form1_Load(object sender, EventArgs e)
+        private void label8_MouseEnter(object sender, EventArgs e)
         {
-            textBox1.Text = settings.osuSongPath;
-
+            label8.BackColor = activeHoverBG;
         }
 
+        private void label8_MouseLeave(object sender, EventArgs e)
+        {
+            label8.BackColor = normalHoverBG;
+        }
+
+        #endregion UI
+
+        #region Form
+        private void label8_Click(object sender, EventArgs e)
+        {
+
+            if (this.WindowState == FormWindowState.Maximized)
+            {
+                this.WindowState = FormWindowState.Normal;
+            } else if (this.WindowState == FormWindowState.Normal)
+            {
+                this.WindowState = FormWindowState.Maximized;
+            }
+        }
 
         private void label2_Click(object sender, EventArgs e)
         {
@@ -113,9 +135,23 @@ namespace PPv3_Application
         {
             Application.Exit();
         }
+        #endregion
 
 
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            textBox1.Text = settings.osuSongPath;
+            timer1.Start();
+            if (outputDevice == null)
+            {
+                outputDevice = new WaveOutEvent();
+                outputDevice.PlaybackStopped += OnPlaybackStopped;
+            }
+            // chart1.Series[0].Points.AddXY(1, 1);
+            
+        }
 
+      
         private void metroButton1_Click(object sender, EventArgs e)
         {
             Microsoft.WindowsAPICodePack.Dialogs.CommonOpenFileDialog di1 = new Microsoft.WindowsAPICodePack.Dialogs.CommonOpenFileDialog();
@@ -128,49 +164,43 @@ namespace PPv3_Application
                 textBox1.Text = di1.FileName;
                 settings.osuSongPath = textBox1.Text;
                 settings.Save();
-
             }
         }
 
-        private void Search()
+        private void Search(string c)
         {
-
-
             try
             {
                 textBox2.Enabled = false;
                 int maps = 0, folder = 0;
+                listBox1.DataSource = null;
                 listBox1.Items.Clear();
+
                 string[] TempPath;
+                listBox2.DataSource = null;
                 listBox2.Items.Clear();
 
-
-                string[] filelist1;
-                filelist1 = Directory.GetDirectories(settings.osuSongPath);
-                foreach (string s in filelist1)
-                    if (s.Contains(textBox2.Text))
+                foreach (string s in OsuSongFolder)
+                {
+                    if (s.ToLower().Contains(c.ToLower()))
                     {
-                        listBox1.Items.Add(s.Replace(settings.osuSongPath + "\\", ""));
+                        listBox1.Items.Add(s);
                         folder++;
-                        label7.Text = "Folders: " + Environment.NewLine + "(" + folder + ")";
 
-                        TempPath = Directory.GetFiles(s);
+                        TempPath = Directory.GetFiles(settings.osuSongPath + "\\" + s);
                         foreach (String a in TempPath)
                         {
-
-
                             if (a.Contains(".osu"))
                             {
                                 maps++;
-                                label6.Text = "Beatmaps" + Environment.NewLine + "(" + maps + ")";
-
                             }
-
-
                         }
                     }
+                }
+                label7.Text = "Folders " + Environment.NewLine + "(" + folder + ")" + Environment.NewLine + "Beatmaps" + Environment.NewLine + "(" + maps + ")";
+                textBox2.Enabled = true;
+                textBox2.Focus();
             }
-
             catch
             { //label2.Text = "Error: Invailid Path" + Environment.NewLine + "(" + settings.osuSongPath + ")";
             }
@@ -179,32 +209,211 @@ namespace PPv3_Application
             textBox2.Focus();
         }
 
+        private void IndexSongFolder()
+        {
+            try
+            {
+                int maps = 0, folder = 0;
+                listBox1.DataSource = null;
+                listBox1.Items.Clear();
+
+                string[] TempPath;
+                listBox2.DataSource = null;
+                listBox2.Items.Clear();
+
+                string[] filelist1;
+                filelist1 = Directory.GetDirectories(settings.osuSongPath);
+                foreach (string s in filelist1)
+                {
+                    OsuSongFolder.Add(s.Replace(settings.osuSongPath + "\\", ""));
+                    folder++;
+
+                    TempPath = Directory.GetFiles(s);
+                    foreach (String a in TempPath)
+                    {
+                        if (a.Contains(".osu"))
+                        {
+                            maps++;
+                        }
+                    }
+                }
+                label7.Text = "Folders " + Environment.NewLine + "(" + folder + ")" + Environment.NewLine + "Beatmaps" + Environment.NewLine + "(" + maps + ")";
+                listBox1.DataSource = OsuSongFolder;
+            }
+            catch
+            { //label2.Text = "Error: Invailid Path" + Environment.NewLine + "(" + settings.osuSongPath + ")";
+            }
+
+            textBox2.Enabled = true;
+        }
+
         private void metroButton2_Click(object sender, EventArgs e)
         {
             if (settings.osuSongPath == "")
             {
-
-                MessageBox.Show("This Folder doesn't exist, or you didn't pick a path yet (got to settings)", settings.osuSongPath);
-
+                MessageBox.Show("You didn't pick a path yet (got to settings)", settings.osuSongPath);
             }
             else
             {
-                Search();
+                CheckForIllegalCrossThreadCalls = false;
+                //Thread TH = new Thread(IndexSongFolder);
 
+                // TH.Start();
+                IndexSongFolder();
             }
         }
 
         private void textBox2_TextChanged(object sender, EventArgs e)
         {
-            Search();
+            Search(textBox2.Text);
         }
 
         private void listBox1_SelectedIndexChanged(object sender, EventArgs e)
         {
+            listBox2.DataSource = null;
+            listBox2.Items.Clear();
 
+            string s = settings.osuSongPath + "\\" + listBox1.GetItemText(listBox1.SelectedItem);
+            current_folder = s;
+            string[] TempPath;
+            TempPath = Directory.GetFiles(s);
+            foreach (String a in TempPath)
+            {
+                if (a.Contains(".osu"))
+                {
+                    listBox2.Items.Add(a.Replace(s + "\\", ""));
+                }
+            }
+        }
+
+        private void listBox2_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            string s = current_folder + "\\" + listBox2.GetItemText(listBox2.SelectedItem);
+            current_map = s;
+            ReadBeatmap(s);
+        }
+
+        private void OnPlaybackStopped(object sender, StoppedEventArgs args)
+        {
+            audioFile.Dispose();
+            audioFile = null;
+        }
+
+        private void button2_Click(object sender, EventArgs e)
+        {
+            if (outputDevice.PlaybackState == PlaybackState.Playing)
+            {
+                outputDevice.Pause();
+                button2.BackgroundImage = PPv3_Application.Properties.Resources.play;
+            }
+            else if (outputDevice.PlaybackState == PlaybackState.Paused)
+            {
+                outputDevice.Play();
+                button2.BackgroundImage = PPv3_Application.Properties.Resources.pause;
+            }
+            else if (outputDevice.PlaybackState == PlaybackState.Stopped)
+            {
+                if (File.Exists(obr.AudioFilePath))
+                {
+                    audioFile = new AudioFileReader(obr.AudioFilePath);
+                    outputDevice.Init(audioFile);
+                    outputDevice.Play();
+                    button2.BackgroundImage = PPv3_Application.Properties.Resources.pause;
+                }
+                else
+                {
+                }
+            }
+        }
+
+        private void button3_Click(object sender, EventArgs e)
+        {
+            outputDevice.Stop();
+            button2.BackgroundImage = PPv3_Application.Properties.Resources.play;
+        }
+
+        private void metroTrackBar1_Scroll(object sender, ScrollEventArgs e)
+        {
+            try
+            {
+                outputDevice.Volume = metroTrackBar1.Value / 100f;
+                label9.Text = "Volume: " + metroTrackBar1.Value + "%";
+            }
+            catch (NullReferenceException nre)
+            {
+                Console.WriteLine(nre);
+            }
+        }
+
+        private void metroTrackBar1_ValueChanged(object sender, EventArgs e)
+        {
+            try
+            {
+                outputDevice.Volume = metroTrackBar1.Value / 100f;
+                label9.Text = "Volume: " + metroTrackBar1.Value + "%";
+            }
+            catch (NullReferenceException nre)
+            {
+                Console.WriteLine(nre);
+            }
+        }
+
+        private void timer1_Tick_1(object sender, EventArgs e)
+        {
+            if (outputDevice.PlaybackState == PlaybackState.Playing)
+            {
+                metroProgressBar1.Maximum = Convert.ToInt32(audioFile.TotalTime.TotalMilliseconds);
+                metroProgressBar1.Value = Convert.ToInt32(audioFile.CurrentTime.TotalMilliseconds);
+
+                TimeSpan currenttime = TimeSpan.FromSeconds(audioFile.CurrentTime.TotalSeconds);
+                TimeSpan total_time = TimeSpan.FromSeconds(audioFile.TotalTime.TotalSeconds);
+                string str = currenttime.ToString(@"hh\:mm\:ss");
+                string str2 = total_time.ToString(@"hh\:mm\:ss");
+
+                label10.Text = str + Environment.NewLine + str2;
+            }
+
+            if (outputDevice.PlaybackState == PlaybackState.Stopped)
+            {
+                metroProgressBar1.Value = 0;
+            }
+        }
+
+      
+
+        private void ReadBeatmap(string path)
+        {
+            try
+            {
+                chart1.Series[0].Points.Clear();
+
+                obr.GetBeatmapData(path);
+                if (File.Exists(obr.BackgroundFilePath))
+                {
+                    pictureBox1.Image = Image.FromFile(obr.BackgroundFilePath);
+
+                }
+                else
+                {
+                    pictureBox1.Image = PPv3_Application.Properties.Resources.nobg;
+                }
+                label11.Text = obr.Artist + " - " + obr.Title;
+
+                PatternAnalyzer.GetPatternOverview(obr.Circle_PosY, obr.Circle_PosX, obr.Circle_Time);
+                int index = 0;
+                foreach (double d in PatternAnalyzer.TimeGap)
+                {
+                    chart1.Series[0].Points.AddXY(obr.Circle_Time[index], PatternAnalyzer.DistanceGap[index]);
+                    index++;
+                }
+            }catch(Exception ex)
+            {
+                Console.WriteLine(ex);
+            }
         }
     }
-
+    #region Classes
+    
     internal class ReSize
     {
         private bool Above, Right, Under, Left, Right_above, Right_under, Left_under, Left_above;
@@ -253,5 +462,6 @@ namespace PPv3_Application
             return "";
         }
     }
-}
+    #endregion
 
+}
